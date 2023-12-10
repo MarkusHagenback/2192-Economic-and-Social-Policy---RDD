@@ -1,0 +1,346 @@
+---
+title: "Practical lesson RDD"
+author: "Markus Hagenbäck"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+---
+Part 0 - Background and aim
+
+We will replicate certain figures and result from Hansen's 2015 paper "Punishment and Deterrence: Evidence from Drunk Driving". The paper test the effects of harsher punishments on driving under the influence. Punishments are determined by blood alcohol content (BAC) and previous offenses. By employing Regression Discontinuity Design (RDD), using the BAC around the different legal limits as the cut-off, Hansen estimates the recidivism (tendency to re-offend). Hansen finds that having a BAC over the DUI threshold reduces the recidivism by up to 2 percentage points. Thus, the paper's finding suggest that additional sanctions on drunk drivers at the BAC thresholds are effective in reducing repeat drunk driving.
+
+Background: The original data consists of 512,964 DUI stops from the state of Washington, US, which has two discrete threshold that which determines the current as well as potential future punishments for drunk drivers. The BAC threshold are above 0.08 and 0.15. The second is considered an aggravated DUI (which results in harsher punishment). The data is from January 1, 1999 to January 1 2003, and December 31, 2007 to December 31, 2011. The paper restricts the attention to those above the legal drinking age, as different cutoffs apply for those under 21 years. 
+
+Our goal here is to replicate some figures and tables from the original paper using R, in order to get a better understanding of RDD and get some experiencing utilizing it in a "real environment". 
+
+The data that we have access to is not exactly the same as the paper because of confidentiality issues. Therefore, our replication will not yield exactly the same result as the paper.
+
+In addition, in this exercise, we will focus on the 0.08 BAC threshold only, in order to focus in the exercise. 
+
+- - - 
+Part 1 - set up
+
+We need to install and employ some R-packages. In addition, we need to load in the data. Use the following code which is provided:
+```{r setup, warning=FALSE}
+#install.packages("fixest")
+#install.packages("ggplot2")
+#install.packages("rdrobust")
+#install.packages("rddensity")
+#install.packages("binsreg")
+
+library(fixest)
+library(ggplot2)
+library(rdrobust)
+library(rddensity)
+library(binsreg)
+
+df <- haven::read_dta("https://github.com/scunning1975/causal-inference-class/raw/master/hansen_dwi.dta")
+```
+
+1) Use the summary() function on your data. 
+
+Question: What is the min, max, and mean of the age (aged)? 
+
+Answer:---
+
+```{r}
+summary(df)
+```
+
+- - - 
+
+Part 2 - Creating a treatment variable
+
+The outcome variable is recidivism, which is measuring whether the person showed back up in the data within 4 months. But before we run our regressions, we need to explore and answers some question about our data. 
+
+First, we need to create a (new) DUI-treatment variable, which would equal 1 if the BAC-level is above the legal limit, 0 otherwise. Remember, we will only focus on the 0.08 BAC cutoff, not the 0.15 cutoff.
+
+1) Create a DUI treatment variable for bac1 >= 0.08
+
+Explore the data after creating the treatment variable, and make sure your treatment variable is valid, i.e. equals 1 if the BAC-level is above the legal limit.
+
+Question: How many observations are above the legal limit? 
+
+Answer: ---
+
+Question: What is the highest BAC-level in the sample?
+
+Answer: ---
+
+2) Re-center the running variable (bac1, not the new DUI-treatment variable) by subtracting 0.08 from it, so that the cutoff is now zero, i.e. bac1 = bac1 - 0.08. 
+
+```{r}
+# create dui treatment variable for bac1>=0.08
+df$dui = (df$bac1 >= 0.08)
+
+# Re-center our running variable at bac1=0.08
+df$bac1_orig = df$bac1
+df$bac1 = df$bac1 - 0.08
+```
+
+3) Explore the range of the running variable and the outcome variable. 
+
+Question: What is the length of bac1? What is the amount of unique elements in bac1? 
+
+Answer: ---
+
+Question: What is the length of recidivism? What is the amount of unique elements in recidivism? 
+
+Answer: ---
+
+```{r}
+length(df$bac1)
+length(unique(df$bac1))
+
+length(df$recidivism)
+length(unique(df$recidivism))
+```
+
+- - - 
+
+Part 3 - Controlling for possible manipulation of the running variable
+
+Before doing our regression, we need to investigate whether there is manipulation or heaping on the running variable. 
+
+1) Heaping occurs can occur because of tools with limited precision are sued for measurements, and when continuous data are rounded or otherwise discretized Non-random heaping can lead to bias and lead to serious consequences. 
+
+Question: Is there a possibility for heaping in our data? Why? Give a possible example (keep it very brief).
+
+Answer: ---
+
+2) One way to do test for manipulation and heaping is by employing histogram. Replicate Figure 1 from the paper: with frequency on the y-axis and BAC-level on the x-axis.
+
+Question: Do you find any evidence of manipulation or heaping? 
+
+Answer: ---
+
+```{r, warning=FALSE }
+# Example 2 (the one on the PP-slide)
+ggplot(data = df, aes(x = bac1)) +
+  geom_histogram(binwidth = 0.001 ,color = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = 0.08, linetype = "dashed", color = "red", size = 1) +
+  labs(
+    x = "Values",
+    y = "Frequency",
+    title = "Histogram Example"
+  ) +
+  theme_bw()
+```
+- - -
+
+Part 4 - Controlling for possible manipulation of the data around the cutoff
+
+We are going to test for manipulation around the cutoff, and we will replicate Table 2 Panel A.
+
+1) Run RD regressions using a local-linear estimator on white, male, age (aged) and accident (acc) as dependent variables.
+Use data in bac1_orig 0.03 to 0.13.
+
+Question: Are the covariates balanced at the cutoff? 
+
+Answer: ---
+
+```{r}
+feols(
+  c(male, white, aged, acc) ~ dui + bac1 + i(dui, bac1), 
+  df[df$bac1_orig >= 0.03 & df$bac1_orig <= 0.13, ], vcov = "hc1"
+) |> 
+  etable()
+```
+
+---
+
+Part 5 - Test of robustness using a more narrow bandwidth
+
+In order to test the robustness of part 4, we can employ a more narrow bandwidth. 
+
+1) In order to check if the results are robust to a more narrow bandwidth, use data in bac1_orig 0.055 to 0.105. (do the same as in part 4, but with a different bandwidth)
+
+Question: Is the results robust to this more narrow bandwidth?
+
+Answer: ---
+
+```{r}
+feols(
+  c(male, white, acc, aged) ~ dui + bac1 + i(dui, bac1), 
+  df[df$bac1_orig >= 0.055 & df$bac1_orig <= 0.105, ], vcov = "hc1"
+) |> 
+  etable()
+```
+
+- - - 
+
+Part 6 - Main result
+
+Finally, we will turn to our main result: estimating the effect of getting a DUI on recidivism.
+
+1) Run an RD estimate using the rdrobust command.
+
+```{r}
+summary(rdrobust(
+  y = df$recidivism, x = df$bac1, c = 0
+))
+
+# The paper used
+# Bandwidth of 0.03 - 0.13 and 0.055 to 0.105,
+# and a rectangular kernel for weighting
+
+# We use triangular weighting
+
+```
+
+Question: What is the result?
+
+Answer: ---
+
+2) Like all RD applications, you need to include a plot of the underlying data. Plot the RD estimator using the rdplot command. 
+
+a) With default settings
+```{r}
+rdplot(
+  y = df$recidivism, x = df$bac1, c = 0
+,x.label = " bac1", y.label = "Outcome")
+```
+
+b) Using 40 bins of equal length
+```{r}
+#RD Plot Using 40 Bins of Equal Length, using esmv: 
+# mimicking variance evenly-spaced method using spacings estimators
+
+rdplot(y= df$recidivism, x = df$bac1, 
+             nbins = c(20,20), c = 0, binselect = 'esmv', 
+             x.label = "Bac1", y.label = "Outcome variable")
+
+```
+
+c) Using Evenly-Spaced Bins
+```{r}
+#IMSE RD PLot with Evenly-Spaced Bins
+out = rdplot(y = df$recidivism, x = df$bac1,  binselect = 'es', 
+             c = 0, x.label = "Bac1", 
+             y.label = "Outcome variable")
+```
+
+Question: Does all the plots imply the same result?
+
+Answer: ---
+
+---
+
+Part 7 - Donut-hole regression - Robustness check
+
+c) Using Evenly-Spaced Bins
+
+
+1) Repeat but drop units in the close vicinity of 0.08 (0.079-0.081) (i.e., the "donut hole" regression). Also, plot the same figures as in part 6.
+
+```{r}
+df_donut <- df[df$bac1_orig <= 0.79 | df$bac1_orig >= 0.081, ]
+
+rdrobust(
+  y = df_donut$recidivism, x = df_donut$bac1, c = 0
+)
+```
+
+a) With default settings
+```{r}
+rdplot(
+  y = df_donut$recidivism, x = df_donut$bac1, c = 0
+,x.label = " bac1", y.label = "Outcome")
+```
+
+b) Using 40 bins of equal length
+```{r}
+#RD Plot Using 40 Bins of Equal Length, using esmv: 
+# mimicking variance evenly-spaced method using spacings estimators
+out = rdplot(df_donut$recidivism, df_donut$bac1, nbins = c(20,20), 
+             c = 0, binselect = 'esmv', 
+             x.label = "Bac1", y.label = "Outcome variable")
+```
+
+c) Using Evenly-Spaced Bins
+```{r}
+#IMSE RD PLot with Evenly-Spaced Bins
+out = rdplot(df_donut$recidivism, df_donut$bac1, 
+             binselect = 'es', c = 0, 
+             x.label = "Bac1", y.label = "Outcome variable")
+```
+
+Question: Do the results stay the same?
+
+Answer: ---
+
+Question: What does a donut-hole regression tells us?
+
+Answer: ---
+
+- - -
+
+Fuzzy RDD
+
+```{r}
+#install.packages("tidyverse")
+#install.packages("broom")  
+#install.packages("rdrobust")  
+#install.packages("estimatr")  
+#install.packages("modelsummary")  
+#install.packages("kableExtra")  
+
+library(tidyverse)  
+library(broom)  
+library(rdrobust)  
+library(estimatr)  
+library(modelsummary)  
+library(kableExtra) 
+library(readr)
+
+# Reading in the data, CSV from Github
+urlfile="https://raw.githubusercontent.com/MarkusHagenback/2192-Economic-and-Social-Policy---RDD/main/tutoring_program_fuzzy.csv"
+tutoring<-read_csv(url(urlfile))
+```
+
+
+```{r}
+# 1) Creating an instrument, which is =true if the entrance exam score is under 70
+# 2) Also, create a new centered running variable by subtracting 70 from the running variable
+# 
+tutoring_centered <- tutoring %>% 
+  mutate(entrance_centered = entrance_exam - 70,
+  below_cutoff = entrance_exam <= 70)
+tutoring_centered
+```
+
+
+```{r}
+# 3) Conduct a Sharp RDD estimation
+
+model_sans_instrument <- lm(exit_exam ~ entrance_centered + tutoring,
+                            data = filter(tutoring_centered,
+                                          entrance_centered >= -10 & 
+                                            entrance_centered <= 10))
+tidy(model_sans_instrument)
+
+# 4) Conduct a Fuzzy RDD estimation
+
+model_fuzzy <- iv_robust(
+  exit_exam ~ entrance_centered + tutoring | entrance_centered + below_cutoff,
+  data = filter(tutoring_centered, entrance_centered >= -10 & entrance_centered <= 10)
+)
+tidy(model_fuzzy)
+
+# 5) Compare the results
+modelsummary(list("No instrument (wrong)" = model_sans_instrument,
+                  "Fuzzy RD (bw = 10)" = model_fuzzy),
+             gof_omit = 'IC|Log|Adj|p\\.value|statistic|se_type',
+             stars = TRUE) %>% 
+  # Add a background color to row 5
+  row_spec(5, background = "#F5ABEA")
+
+# 6) Non-parametric estimation
+rdrobust(y = tutoring$exit_exam, x = tutoring$entrance_exam, 
+         c = 70, fuzzy = tutoring$tutoring) %>% 
+  summary()
+```
+
+
+      
